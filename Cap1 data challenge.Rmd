@@ -1,0 +1,257 @@
+---
+title: "Capital One Data Challenge"
+author: "Drithi Iyer"
+date: "February 17, 2020"
+output:
+  html_document:
+    code_folding: hide
+  pdf_document: default
+---
+***
+#### Introduction  
+
+**Problem Statement:**    
+The real estate company that we are consulting for has a niche in purchasing properties to rent out short-term as part of their business model specifically within New York City.  
+The real estate company has already concluded that two bedroom properties are the most profitable; however, they do not know which zip codes are best to invest in.
+
+**Objective:**    
+Finding properties in New York City that generate profit the quickest and therefore yield a maximum return on investment. 
+
+**Assumptions:**  
+1.	The company will pay for the property upfront in cash and no interest cost is considered.  
+2.	The prices are not adjusted for inflation. The time value of money discount rate is 0%.  
+3.	All properties and all square feet within each locale is homogeneous.  
+4.	Airbnb occupancy rate is assumed at 75%.  
+5.	Cleaning fee is an important parameter to generate profit. It is assumed that the cleaning fee generates no revenue and the entire amount charged for the purpose of cleaning, is used. Therefore, the only income considered is price.    
+
+**Packages Used:**
+```{r}
+library(dplyr)
+library(naniar)
+library(magrittr)
+library(ggplot2)
+```
+
+***
+#### I. Data Quality Check  
+
+* Reading the Zillow dataset  
+```{r}
+zillow_df <- read.csv(file = 'zillow.csv')
+dim(zillow_df)
+```
+
+* Reading the Airbnb dataset    
+```{r}
+airbnb_df <- read.csv(file = 'airbnb.csv')
+dim(airbnb_df)
+```
+From the dimensions of the two datasets, we can filter out unnecessary variables, for the analysis process.   
+
+**Cleaning and Filtering Data**   
+I noticed in the Airbnb dataset, the "state" column had observations for "New York" and "NY". The following code will substitute all rows with different "New York" to "NY", making it easier to analyze.
+```{r}
+airbnb_df$state <- gsub("New York", "NY", airbnb_df$state)
+airbnb_df$state <- gsub("ny", "NY", airbnb_df$state)
+airbnb_df$state <- gsub("Ny", "NY", airbnb_df$state)
+```
+
+* The two datasets are now filtered to retain only New York and two bedroom observations.
+```{r}
+airbnb_df_filtered <- airbnb_df %>% filter(state == "NY" & bedrooms == 2)
+zillow_df_filtered <- zillow_df %>% filter(State == "NY")
+```
+
+* To make it easier for analysis, the two datasets can be merged by the common variable "zipcode".
+```{r}
+# Renaming region name to zipcode to allow merge
+colnames(zillow_df_filtered)[2] <- "zipcode"
+
+# Merging the datasets
+merged_df <- merge(airbnb_df_filtered, zillow_df_filtered, by = "zipcode")
+```
+
+* Finally, we can filter the new merged dataset for columns that will help us analyze our dataset better, and thus working with a smaller dataset.
+```{r}
+# Selecting columns that are useful in the analysis process from the merged dataset
+merged_filtered_df <- merged_df %>% select(zipcode, street, neighbourhood_group_cleansed, latitude, longitude, square_feet, price, cleaning_fee, extra_people, minimum_nights, maximum_nights, number_of_reviews, review_scores_rating, SizeRank, X2017.05, X2017.06)
+dim(merged_filtered_df)
+```
+
+* Quick glimpse of the dataset
+```{r}
+glimpse(merged_filtered_df)
+```
+
+**Missing Value Analysis**
+```{r}
+# Summary of missing values in the dataset
+miss_var_summary(merged_filtered_df)
+```
+```{r}
+# Plot showing the missing variables
+gg_miss_var(merged_filtered_df, show_pct = TRUE)
+```
+
+* Summary of the dataset
+```{r}
+# Summary of the entire dataset
+summary(merged_filtered_df)
+```
+**Key Points**  
+1. *square_feet* has about 98% of missing data and predicting these values could lead to incorrect results, hence, square_feet will be left out and not used in the analysis.  
+2. For calculations and analysis, the last pulled out data will be used (*X2017.06*) since this is the most accurate in terms of pricing for future trends.  
+3. Generating the missing values for *review_scores_rating* is a great analysis to see how certain neighborhoods are reviewed by people staying in that area, as compared to others. This is also a useful parameter to look at before investing. The missing values for scores will be computed in the next section.  
+
+* Computing *review_scores_rating*: The value inputed for all missing values of this parameter will be the mean or average value, since the mean, median and mode are almost similar.
+```{r}
+# Finding NULL values in the column and imputing the mean value
+merged_filtered_df$review_scores_rating[is.na(merged_filtered_df$review_scores_rating)] <- mean(merged_filtered_df$review_scores_rating, na.rm = TRUE)
+```
+
+* Summary of dataset to show imputed values
+```{r}
+summary(merged_filtered_df)
+```
+
+**Treating Outliers**  
+Outliers are values that differ significantly from the rest of the values in the dataset. To avoid any incorrect analysis, we will check for outliers in this section.  
+
+* Price analysis - the values of price (and cleaning fee) are per day, however, the cost of properties is the total cost.  
+* The summary table shows the maximum price to be 4000.0 while the other values are smaller in range. This depicts possible outliers in price.  
+```{r}
+# Q-Q plot to see the data distribution at-a-glance 
+qqnorm(merged_filtered_df$price)
+```
+
+* Analyzing price outliers per zipcode  
+```{r}
+# Plot to show the outliers as per zipcode
+ggplot(data = merged_filtered_df) + aes(x = merged_filtered_df$price, y = merged_filtered_df$zipcode, color = merged_filtered_df$zipcode) + geom_point(alpha=0.7, size=0.5) + labs(x="Price", y="Zipcodes", color="Zipcode Group") + scale_x_log10()
+```
+
+**Observations**  
+1. Zipcodes 10003, 10011 and 11217 show possible outliers because of extreme values.   
+
+* Treating outliers and cleaning the dataset
+```{r}
+# Boxplot to visualize outliers of the price parameter
+boxplot(merged_filtered_df$price)
+```
+
+* The quantile function tells us how much of the data lies below a certain value. Using this function we can look for outliers in the data.  
+```{r}
+# Using the quantile function to see where the outliers lie in the data
+quantile(merged_filtered_df$price)
+```
+
+**Observations**  
+1. The 100 percent quartile which are values 320 are the outliers here. For the final dataset, outliers will be removed.  
+
+```{r}
+# Creating a subset of the data to discard price values greater than 320
+final_dataset <- subset(merged_filtered_df, merged_filtered_df$price < 320)
+
+# Boxplot to see the new dataset without outliers
+boxplot(final_dataset$price)
+```
+
+***
+#### II. Data Munging   
+
+For the final part of the analysis, we will create two key parameters to make recommendations on zipcodes to invest in.   
+1. **Breakeven Years** - This parameter is the number of years it will take for the property to breakeven and thereby generate profits. Breakeven is essential to calculate which zipcode could generate profit quickly, a key parameter for investment decisions.  
+2. **Revenue** - This parameter will be generated for a fixed number of years. For the purpose of this analysis, 15 years has been used. 
+
+```{r}
+final_dataset$annual_income <- final_dataset$price * (0.75 * 365)
+final_dataset$breakeven_years <- final_dataset$X2017.06/final_dataset$annual_income
+final_dataset$revenue <- -(final_dataset$X2017.06) + (15 * (final_dataset$annual_income))
+```
+
+* Final Dataset Missing Values  
+```{r}
+gg_miss_var(final_dataset)
+```
+```{r}
+summary(final_dataset)
+```
+
+***
+#### III. Visualizations and Recommendations  
+
+* Review Scores Analysis:  
+```{r}
+ggplot(data = final_dataset, aes(x=final_dataset$review_scores_rating, y=final_dataset$neighbourhood_group_cleansed, color=final_dataset$neighbourhood_group_cleansed)) + geom_line() + labs(x="Review Scores", y="Neighbourhood", color="Neighbourhood Group")
+```
+
+**Observations**  
+1. Manhattan had review scores ranging from 20 to 100. Therefore some areas of Manhattan did not do well, whereas other areas did well.    
+2. The graph shows that Queens and Staten Island performed well in review scores with Queens leading in scores between 80 and 100.  
+
+* Breakeven Analysis:
+```{r}
+# Bar plot to show break-even analysis
+ggplot(data=final_dataset, aes(x=final_dataset$neighbourhood_group_cleansed, y=final_dataset$breakeven_years, color=final_dataset$neighbourhood_group_cleansed)) + geom_bar(stat="identity", width=0.5) + labs(x="Neighbourhood", y="Breakeven Years", color="Neighbourhood Group") + scale_y_log10()
+```
+
+**Observations**    
+1. From the graph we can see that Queens and Staten Island have low breakeven points.  
+2. Brooklyn and Manhattan take longer to reach the breakeven point.  
+
+* Top 10 zipcodes that generate profit quickly
+```{r}
+# Sort data to show the top 10 zipcodes
+top_zipcodes <- final_dataset[order(final_dataset$breakeven_years), ]
+top_zipcodes <- head(top_zipcodes, 10)
+
+# Scatter plot to show top 10 zipcodes and their neighbourhoods
+ggplot(data=top_zipcodes, aes(x=top_zipcodes$breakeven_years, y=top_zipcodes$zipcode, group=top_zipcodes$neighbourhood_group_cleansed, color=top_zipcodes$neighbourhood_group_cleansed)) +  geom_point(alpha=0.7, size=3) + labs(x="Breakeven Years", y="Zipcodes", color="Neighbourhood Group")
+```
+
+**Observations**  
+1. The graph shows that zipcodes 10305, 11434, 11234, 11003 and 10303 are among the top zipcodes to generate profit quickly.   
+2. Zip code 10305 breaks even at approximately 5.18 years at the very least and zip code 11434 breaks even at approximately 5.59 years.     
+3. It can be said that Queens and Staten Island perform the best in terms of quick generation of profits, thus they could be less risky investments.  
+
+* Least 10 favorable zipcodes based on breakeven years
+```{r}
+# Sort data to show the bottom 10 zipcodes in the dataset
+least_zipcodes <- final_dataset[order(-final_dataset$breakeven_years), ]
+least_zipcodes <- head(least_zipcodes, 10)
+
+# Scatter plot to show bottom 10 zipcodes and their neighbourhoods
+ggplot(data=least_zipcodes, aes(x=least_zipcodes$breakeven_years, y=least_zipcodes$zipcode, group=least_zipcodes$neighbourhood_group_cleansed, color=least_zipcodes$neighbourhood_group_cleansed)) + geom_point(alpha=0.7, size=3) + labs(x="Breakeven Years", y="Zipcodes", color="Neighbourhood Group")
+```
+
+**Observations**  
+1. The graph shows that multiple zipcodes in Manhattan take over 110 years to breakeven and then generate profit.     
+2. Thus, it can be said that Manhattan would be a risky investment for quick profit generation.  
+
+* Top 10 zipcodes based on revenue generation
+```{r}
+# Sort data to show the top 10 zipcodes based on revenue
+top_revenue <- final_dataset[order(final_dataset$revenue), ]
+top_revenue <- tail(top_revenue, 10)
+
+# Scatter plot to show top 10 zipcodes and their neighbourhoods
+ggplot(data=top_revenue, aes(x=top_revenue$revenue, y=top_revenue$zipcode, group=top_revenue$neighbourhood_group_cleansed, color=top_revenue$neighbourhood_group_cleansed)) +  geom_point(alpha=0.7, size=3) + labs(x="Revenue", y="Zipcodes", color="Neighbourhood Group") + scale_x_log10()
+```
+
+**Observations**  
+1. Zip codes 11434, 11234 and 11003 are great revenue spinners.
+
+***
+#### IV. Conclusion  
+1. Based on multiple paramaters, it can be said that Queens and Staten Island are the best neighborhoods to invest in. These parameters include review scores, quick profit generation and revenue.  
+2. From the analysis, zipcodes 11434, 11234 and 11003 pertaining to Queens will provide the best return on investment and can be said to be less risky investments.  
+3. Zipcodes 10305 and 10303 are less risky and provide the best return on investment in Staten Island, as well.  
+
+***
+#### V. Future Steps  
+1. There were over 30,000 observations that were not pertaining to two bedrooms that could be looked into as well.  
+2. New York is a financial hub and has wide scope for long-term rentals. Some properties could be looked into renting long-term.  
+3. This analysis can be extended to other parts of the country and not just New York City.  
+4. A number of zipcodes had incorrect zipcode length (either less or more than 5 characters). This can be imputed with the latitude and longitude values in the dataset.  
+
+
